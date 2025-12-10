@@ -3,19 +3,17 @@ import { Helmet } from 'react-helmet';
 import { useParams, Link } from 'react-router-dom';
 import { 
   ArrowLeft, Mail, ExternalLink, Loader2, ScrollText, PenTool, Shield, 
-  GraduationCap, Banknote, HeartPulse, X, Wallet, Scale, Eye, Star
+  GraduationCap, Banknote, HeartPulse, X, Scale, Eye, Star
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import AdBanner from '@/components/AdBanner';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { 
   calculateSenatorRelatorScore, 
   checkStrategicCommissions, 
   calculateSabatinasScore,
-  calculateEfficiencyIndex,
   normalizeText
 } from '@/lib/legislative-logic';
 
@@ -58,25 +56,19 @@ const SenatorProfilePage = () => {
   const [senador, setSenador] = useState(null);
   const [loading, setLoading] = useState(true);
   
-  // KPIs
   const [kpiRelator, setKpiRelator] = useState({ score: 0, resumo: '-', destaques: [] });
   const [kpiComissoes, setKpiComissoes] = useState({ score: 0, papeis: [], label: '-' });
   const [kpiFiscalizacao, setKpiFiscalizacao] = useState({ count: 0, label: '-', description: '' });
-  const [kpiEficiencia, setKpiEficiencia] = useState({ indice: '0.0', interpretacao: '-' });
 
-  const [graficoData, setGraficoData] = useState([]);
-  const [totalGastoPeriodo, setTotalGastoPeriodo] = useState(0);
   const [materiasTematicas, setMateriasTematicas] = useState({ pecs: [], economia: [], seguranca: [], educacao: [], saude: [], outros: [] });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalCategory, setModalCategory] = useState('outros');
   const anosDisponiveis = ['2023', '2024', '2025', 'Todos'];
 
-  // Helper robusto para tratar XML->JSON do Senado
   const forceArray = (data) => {
     if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return [data];
+    return Array.isArray(data) ? data : [data];
   };
   
   const categorizarMateria = (materia) => {
@@ -95,58 +87,45 @@ const SenatorProfilePage = () => {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      
+      let comissoesScore = { score: 0, papeis: [], label: '-' };
+      let todasRelatorias = [];
+      let todasVotacoes = [];
+      let relatorScore = { score: 0, resumo: '-', destaques: [] };
+
       try {
-        // 1. Perfil
-        const resPerfil = await fetch(`https://legis.senado.leg.br/dadosabertos/senador/${id}.json`);
+        // 1. Perfil via Proxy (evita CORS)
+        const resPerfil = await fetch(`/api-senado/senador/${id}.json`, { headers: { 'Accept': 'application/json' } });
         if (!resPerfil.ok) throw new Error("Falha ao carregar perfil");
         const jsonPerfil = await resPerfil.json();
         setSenador(jsonPerfil.DetalheParlamentar.Parlamentar);
 
-        // Loop de anos para acumular dados
         const anos = anoSelecionado === 'Todos' ? ['2023', '2024', '2025'] : [anoSelecionado];
         
-        let todasRelatorias = [];
-        let todasVotacoes = [];
-        let todosGastos = [];
-
         for (const ano of anos) {
             // Relatorias
             try {
-                const resRel = await fetch(`https://legis.senado.leg.br/dadosabertos/senador/${id}/relatorias.json?ano=${ano}`);
+                const resRel = await fetch(`/api-senado/senador/${id}/relatorias.json?ano=${ano}`, { headers: { 'Accept': 'application/json' } });
                 if (resRel.ok) {
                     const jsonRel = await resRel.json();
                     todasRelatorias = [...todasRelatorias, ...forceArray(jsonRel.MateriasRelatadas?.Materia)];
                 }
-            } catch (e) { console.warn(`Sem relatorias para ${ano}`); }
+            } catch (e) { console.warn(`Sem relatorias para ${ano}`, e); }
 
             // Votações
             try {
-                const resVot = await fetch(`https://legis.senado.leg.br/dadosabertos/senador/${id}/votacoes.json?ano=${ano}`);
+                const resVot = await fetch(`/api-senado/senador/${id}/votacoes.json?ano=${ano}`, { headers: { 'Accept': 'application/json' } });
                 if (resVot.ok) {
                     const jsonVot = await resVot.json();
                     todasVotacoes = [...todasVotacoes, ...forceArray(jsonVot.VotacoesParlamentar?.Parlamentar?.Votacoes?.Votacao)];
                 }
-            } catch (e) { console.warn(`Sem votações para ${ano}`); }
-
-            // Gastos (CORREÇÃO DE ENDPOINT)
-            try {
-                const resGas = await fetch(`https://legis.senado.leg.br/dadosabertos/senador/${id}/indenizatorias/${ano}.json`);
-                if (resGas.ok) {
-                    const jsonGas = await resGas.json();
-                    // Caminho correto para indenizações
-                    const raw = jsonGas.IndenizacaoParlamentar?.Parlamentar?.Indenizacoes?.Indenizacao;
-                    todosGastos = [...todosGastos, ...forceArray(raw)];
-                }
-            } catch (e) { console.warn(`Sem verbas para ${ano}`); }
+            } catch (e) { console.warn(`Sem votações para ${ano}`, e); }
         }
 
         // --- Processamento ---
-
-        // Relatorias
-        const relatorScore = calculateSenatorRelatorScore(todasRelatorias);
+        relatorScore = calculateSenatorRelatorScore(todasRelatorias);
         setKpiRelator(relatorScore);
 
-        // Categorização
         const tematicas = { pecs: [], economia: [], seguranca: [], educacao: [], saude: [], outros: [] };
         todasRelatorias.forEach(m => {
             const cat = categorizarMateria(m);
@@ -158,53 +137,28 @@ const SenatorProfilePage = () => {
                 ano: ident.AnoMateria,
                 ementa: m.EmentaMateria
             };
-            // Evita duplicatas de ID
             if(tematicas[cat] && !tematicas[cat].find(x => x.id === proj.id)) {
                 tematicas[cat].push(proj);
             }
         });
         setMateriasTematicas(tematicas);
 
-        // Comissões (Endpoint Geral)
+        // Comissões
         try {
-            const resComissoes = await fetch(`https://legis.senado.leg.br/dadosabertos/senador/${id}/comissoes.json`);
+            const resComissoes = await fetch(`/api-senado/senador/${id}/comissoes.json`, { headers: { 'Accept': 'application/json' } });
             if (resComissoes.ok) {
                 const jsonComissoes = await resComissoes.json();
                 const raw = jsonComissoes.MembroComissaoParlamentar?.Parlamentar?.MembroComissao;
-                const comissoesScore = checkStrategicCommissions(forceArray(raw));
+                comissoesScore = checkStrategicCommissions(forceArray(raw));
                 setKpiComissoes(comissoesScore);
             }
-        } catch (e) { console.warn("Erro comissões"); }
+        } catch (e) { console.warn("Erro comissões", e); }
 
-        // Votações
         setKpiFiscalizacao(calculateSabatinasScore(todasVotacoes));
 
-        // Gastos (Cotas)
-        const totalGasto = todosGastos.reduce((acc, g) => acc + parseFloat(g.ValorReembolsado?.replace(',', '.') || 0), 0);
-        setTotalGastoPeriodo(totalGasto);
-
-        const gastosAgrupados = todosGastos.reduce((acc, g) => {
-            const tipo = g.DescricaoDespesa;
-            const valor = parseFloat(g.ValorReembolsado?.replace(',', '.') || 0);
-            if (valor > 0) { 
-                if (!acc[tipo]) acc[tipo] = 0; 
-                acc[tipo] += valor; 
-            }
-            return acc;
-        }, {});
-        
-        setGraficoData(Object.entries(gastosAgrupados)
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 6));
-
-        // Eficiência (Soma de pontos de produtividade)
-        const pontosAtividade = relatorScore.score + comissoesScore.score + (todasVotacoes.length > 0 ? 10 : 0);
-        setKpiEficiencia(calculateEfficiencyIndex(totalGasto, pontosAtividade));
-
       } catch (error) {
-        console.error("Erro crítico perfil senador:", error);
-        toast({ title: "Erro de Conexão", description: "Falha ao comunicar com o Senado Federal.", variant: "destructive" });
+        console.error("Erro perfil senador:", error);
+        toast({ title: "Erro", description: "Não foi possível carregar os dados deste senador.", variant: "destructive" });
       } finally {
         setLoading(false);
       }
@@ -213,14 +167,20 @@ const SenatorProfilePage = () => {
     if (id) fetchData();
   }, [id, anoSelecionado, toast]);
 
-  if (loading || !senador) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><Loader2 className="w-12 h-12 text-blue-600 animate-spin" /></div>;
+  const openModal = (category) => {
+      setModalCategory(category);
+      setModalOpen(true);
+  };
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><Loader2 className="w-12 h-12 text-blue-600 animate-spin" /></div>;
+  
+  if (!senador) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="text-center">Senador não encontrado.</div></div>;
 
   const info = senador.IdentificacaoParlamentar;
   const mandato = forceArray(senador.Mandatos?.Mandato)[0];
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
-      {/* HEADER */}
         <div className="bg-white border-b shadow-sm pt-6 pb-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <Link to="/senadores" className="text-gray-500 hover:text-blue-600 inline-flex items-center text-sm mb-6 font-medium"><ArrowLeft className="mr-2 h-4 w-4" /> Voltar para Senadores</Link>
@@ -240,15 +200,12 @@ const SenatorProfilePage = () => {
         </div>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* KPI CARDS */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
                 <Card className="bg-blue-50/50 border-blue-200"><CardContent className="p-4"><div className="text-xs font-bold text-blue-600 uppercase mb-1">Poder de Decisão</div><div className="text-3xl font-black text-gray-900">{kpiComissoes.score}</div><div className="text-[10px] text-gray-500">{kpiComissoes.label}</div></CardContent></Card>
                 <Card className="bg-purple-50/50 border-purple-200"><CardContent className="p-4"><div className="text-xs font-bold text-purple-600 uppercase mb-1">Matérias Relatadas</div><div className="text-3xl font-black text-gray-900">{kpiRelator.score}</div><div className="text-[10px] text-gray-500">{kpiRelator.resumo}</div></CardContent></Card>
                 <Card className="bg-amber-50/50 border-amber-200"><CardContent className="p-4"><div className="text-xs font-bold text-amber-600 uppercase mb-1">Sabatinas</div><div className="text-3xl font-black text-gray-900">{kpiFiscalizacao.count}</div><div className="text-[10px] text-gray-500">{kpiFiscalizacao.description}</div></CardContent></Card>
-                <Card className="bg-green-50/50 border-green-200"><CardContent className="p-4"><div className="text-xs font-bold text-green-600 uppercase mb-1">Eficiência</div><div className="text-xl font-black text-gray-900">{kpiEficiencia.indice}</div><div className="text-[10px] text-gray-500">{kpiEficiencia.interpretacao}</div></CardContent></Card>
           </div>
 
-          {/* DESTAQUES RELATORIAS */}
           {kpiRelator.destaques && kpiRelator.destaques.length > 0 && (
             <div className="mb-8">
                 <h3 className="font-bold text-lg text-gray-900 mb-4 flex items-center">
@@ -272,7 +229,6 @@ const SenatorProfilePage = () => {
             </div>
           )}
 
-          {/* TABS DE MATÉRIAS */}
           <div className="mb-12">
                 <Tabs defaultValue="pecs" className="w-full">
                     <TabsList className="w-full justify-start h-auto p-1 bg-gray-100 flex-wrap gap-1 mb-6 rounded-xl">
@@ -296,44 +252,15 @@ const SenatorProfilePage = () => {
                 </Tabs>
           </div>
 
-          {/* GRÁFICOS E COMISSÕES */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
              <div className="lg:col-span-2">
-                <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-2xl font-bold text-gray-900 flex items-center">
-                        <Wallet className="w-7 h-7 mr-3 text-blue-600" /> Gastos Indenizatórios (Cota)
-                    </h2>
+                <AdBanner title="Publicidade" />
+                <div className="mt-6 p-6 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                    <p className="text-gray-500 text-sm">O Senado Federal descontinuou a API de despesas abertas (CEAPS). <br/>Para consultar gastos, acesse o Portal da Transparência oficial.</p>
                 </div>
-
-                <Card className="border-gray-200 shadow-sm mb-6">
-                    <CardContent className="h-[300px] pt-6">
-                        {graficoData.length > 0 ? (
-                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={graficoData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                    <XAxis type="number" hide />
-                                    <YAxis dataKey="name" type="category" width={150} tick={{fontSize: 11}} interval={0}/>
-                                    <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} cursor={{fill: 'transparent'}} />
-                                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                                        {graficoData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#2563eb' : '#60a5fa'} />
-                                        ))}
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div className="h-full flex items-center justify-center text-gray-400">Sem dados de gastos para este ano.</div>
-                        )}
-                    </CardContent>
-                    <div className="bg-gray-50 p-4 border-t text-center">
-                        <p className="text-xs text-gray-500 uppercase font-bold">Total Acumulado ({anoSelecionado})</p>
-                        <p className="text-2xl font-black text-gray-900">R$ {totalGastoPeriodo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                </Card>
              </div>
 
              <div className="space-y-6">
-                <AdBanner title="Apoio Institucional" />
-                
                 <Card>
                     <div className="p-6">
                         <h3 className="font-bold text-lg mb-4 flex items-center"><Scale className="w-5 h-5 mr-2 text-gray-500"/> Comissões Chave</h3>
@@ -361,6 +288,24 @@ const SenatorProfilePage = () => {
                 </Card>
              </div>
           </div>
+
+          <SimpleModal 
+            isOpen={modalOpen} 
+            onClose={() => setModalOpen(false)} 
+            title={`Todas as Matérias: ${modalCategory.toUpperCase()}`}
+          >
+             <div className="space-y-2">
+                {materiasTematicas[modalCategory]?.map((proj, idx) => (
+                     <div key={`modal-${proj.id}-${idx}`} className="bg-gray-50 p-3 rounded border border-gray-200">
+                        <div className="flex justify-between items-center mb-1">
+                             <span className="text-xs font-bold text-blue-700">{proj.siglaTipo} {proj.numero}/{proj.ano}</span>
+                             <a href={`https://www25.senado.leg.br/web/atividade/materias/-/materia/${proj.id}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-xs flex items-center">Abrir <ExternalLink className="w-3 h-3 ml-1"/></a>
+                        </div>
+                        <p className="text-sm text-gray-800">{proj.ementa}</p>
+                     </div>
+                ))}
+             </div>
+          </SimpleModal>
 
         </div>
       </div>
