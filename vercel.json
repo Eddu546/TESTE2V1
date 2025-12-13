@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/api/senado/:path*",
+      "destination": "https://legis.senado.leg.br/dadosabertos/:path*"
+    },
+    {
+      "source": "/api/camara/:path*",
+      "destination": "https://dadosabertos.camara.leg.br/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
